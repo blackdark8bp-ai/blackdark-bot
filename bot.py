@@ -1,173 +1,167 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# ================== الإعدادات ==================
+# بياناتك
 BOT_TOKEN = "8270195922:AAGDVz_mL8FOJta3NnnNSZTm1m-5guzba4Y"
-DEVELOPER_ID = 6597567561  # مكان تجميع المشاكل/الاقتراحات/الصور
+DEV_ID = 6597567561
 
-# ================== اللوج ==================
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+# Logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# ================== التخزين المؤقت ==================
-user_language = {}  # user_id -> "ar" or "en"
-user_state = {}     # user_id -> {"mode": "issue/suggestion/win", "messages": []}
+# ذاكرة مؤقتة
+user_data = {}
 
-# ================== /start ==================
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [
-            InlineKeyboardButton("العربية", callback_data="lang_ar"),
-            InlineKeyboardButton("English", callback_data="lang_en"),
-        ]
+        [InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar")],
+        [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
     ]
-    text = "اهلا بك في بوت بلاك دارك 👋\nWelcome to Black Dark Bot 👋\n\nالرجاء اختيار اللغة:\nPlease choose your language:"
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = "👋 أهلاً بك في بوت بلاك دارك\nPlease choose your language 👇"
+    await update.message.reply_text(text, reply_markup=reply_markup)
 
-# ================== القائمة الرئيسية ==================
+# قائمة رئيسية
 def main_menu(lang="ar"):
     if lang == "ar":
         keyboard = [
-            [
-                InlineKeyboardButton("📩 إرسال المشكلة", callback_data="issue"),
-                InlineKeyboardButton("💡 إرسال اقتراحات", callback_data="suggestion"),
-                InlineKeyboardButton("🥳 إرسال صور الفوز", callback_data="win"),
-            ]
+            [InlineKeyboardButton("📩 إرسال المشكلة", callback_data="issue")],
+            [InlineKeyboardButton("💡 إرسال اقتراحات", callback_data="suggestion")],
+            [InlineKeyboardButton("🥳 إرسال صور الفوز", callback_data="win")]
         ]
-        return "اختر من القائمة:", InlineKeyboardMarkup(keyboard)
     else:
         keyboard = [
-            [
-                InlineKeyboardButton("📩 Send Issue", callback_data="issue"),
-                InlineKeyboardButton("💡 Send Suggestion", callback_data="suggestion"),
-                InlineKeyboardButton("🥳 Send Winning Pic", callback_data="win"),
-            ]
+            [InlineKeyboardButton("📩 Send Issue", callback_data="issue")],
+            [InlineKeyboardButton("💡 Send Suggestion", callback_data="suggestion")],
+            [InlineKeyboardButton("🥳 Send Win Screenshot", callback_data="win")]
         ]
-        return "Choose from the menu:", InlineKeyboardMarkup(keyboard)
+    return InlineKeyboardMarkup(keyboard)
 
-# ================== اختيار اللغة ==================
-async def choose_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# رجوع
+def back_button(lang="ar"):
+    if lang == "ar":
+        return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرجوع", callback_data="back")]])
+    else:
+        return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+
+# التعامل مع الأزرار
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    lang = query.data.split("_")[1]
-    user_language[query.from_user.id] = lang
 
-    text, keyboard = main_menu(lang)
-    try:
-        await query.edit_message_text(text, reply_markup=keyboard)
-    except:
-        pass  # يتجاهل خطأ "Message is not modified"
-
-# ================== التعامل مع الأزرار ==================
-async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    choice = query.data
     user_id = query.from_user.id
-    lang = user_language.get(user_id, "ar")
 
-    if query.data == "issue":
-        user_state[user_id] = {"mode": "issue", "messages": []}
-        if lang == "ar":
-            text = "يرجى إرسال المشكلة أو مقطع فيديو يوضحها 👇\n\nبعد الانتهاء اضغط زر ✅ إرسال المشكلة"
-            keyboard = [[InlineKeyboardButton("✅ إرسال المشكلة", callback_data="send")],
-                        [InlineKeyboardButton("🔙 رجوع", callback_data="back")]]
-        else:
-            text = "Please send your issue or a video explaining it 👇\n\nWhen finished, press ✅ Send Issue"
-            keyboard = [[InlineKeyboardButton("✅ Send Issue", callback_data="send")],
-                        [InlineKeyboardButton("🔙 Back", callback_data="back")]]
+    # اختيار اللغة
+    if choice == "lang_ar":
+        user_data[user_id] = {"lang": "ar", "mode": None, "messages": []}
+        await query.edit_message_text("مرحباً بك! اختر من القائمة 👇", reply_markup=main_menu("ar"))
+    elif choice == "lang_en":
+        user_data[user_id] = {"lang": "en", "mode": None, "messages": []}
+        await query.edit_message_text("Welcome! Choose from the menu 👇", reply_markup=main_menu("en"))
+
+    # مشكلة
+    elif choice == "issue":
+        lang = user_data[user_id]["lang"]
+        user_data[user_id]["mode"] = "issue"
+        user_data[user_id]["messages"] = []
+        text = "يرجى إرسال مشكلتك 👇" if lang == "ar" else "Please send your issue 👇"
+        keyboard = [
+            [InlineKeyboardButton("✅ إرسال المشكلة", callback_data="send_issue")],
+            [InlineKeyboardButton("🔙 الرجوع", callback_data="back")]
+        ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data == "suggestion":
-        user_state[user_id] = {"mode": "suggestion", "messages": []}
-        if lang == "ar":
-            text = "اكتب اقتراحك وسنقوم بمراجعته 👇\n\nبعد الانتهاء اضغط زر ✅ إرسال الاقتراح"
-            keyboard = [[InlineKeyboardButton("✅ إرسال الاقتراح", callback_data="send")],
-                        [InlineKeyboardButton("🔙 رجوع", callback_data="back")]]
-        else:
-            text = "Please type your suggestion 👇\n\nWhen finished, press ✅ Send Suggestion"
-            keyboard = [[InlineKeyboardButton("✅ Send Suggestion", callback_data="send")],
-                        [InlineKeyboardButton("🔙 Back", callback_data="back")]]
+    # اقتراح
+    elif choice == "suggestion":
+        lang = user_data[user_id]["lang"]
+        user_data[user_id]["mode"] = "suggestion"
+        user_data[user_id]["messages"] = []
+        text = "اكتب اقتراحك 👇" if lang == "ar" else "Please type your suggestion 👇"
+        keyboard = [
+            [InlineKeyboardButton("✅ إرسال الاقتراح", callback_data="send_suggestion")],
+            [InlineKeyboardButton("🔙 الرجوع", callback_data="back")]
+        ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data == "win":
-        user_state[user_id] = {"mode": "win", "messages": []}
-        if lang == "ar":
-            text = "أرسل صورة فوزك 🎉 وسنحتفظ بها ضمن قائمة الإنجازات 👇\n\nبعد الانتهاء اضغط زر ✅ إرسال الصورة"
-            keyboard = [[InlineKeyboardButton("✅ إرسال الصورة", callback_data="send")],
-                        [InlineKeyboardButton("🔙 رجوع", callback_data="back")]]
-        else:
-            text = "Send your winning screenshot 🎉 We’ll add it to the achievements 👇\n\nWhen finished, press ✅ Send Pic"
-            keyboard = [[InlineKeyboardButton("✅ Send Pic", callback_data="send")],
-                        [InlineKeyboardButton("🔙 Back", callback_data="back")]]
+    # صورة فوز
+    elif choice == "win":
+        lang = user_data[user_id]["lang"]
+        user_data[user_id]["mode"] = "win"
+        user_data[user_id]["messages"] = []
+        text = "أرسل صورة فوزك 🎉" if lang == "ar" else "Send your winning screenshot 🎉"
+        keyboard = [
+            [InlineKeyboardButton("✅ إرسال الصورة", callback_data="send_win")],
+            [InlineKeyboardButton("🔙 الرجوع", callback_data="back")]
+        ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data == "send":
-        state = user_state.get(user_id)
-        if not state or not state["messages"]:
+    # رجوع
+    elif choice == "back":
+        lang = user_data.get(user_id, {}).get("lang", "ar")
+        msg = "مرحباً بك! اختر من القائمة 👇" if lang == "ar" else "Welcome! Choose from the menu 👇"
+        await query.edit_message_text(msg, reply_markup=main_menu(lang))
+
+    # إرسال نهائي
+    elif choice.startswith("send_"):
+        lang = user_data[user_id]["lang"]
+        mode = user_data[user_id]["mode"]
+        messages = user_data[user_id]["messages"]
+
+        if not messages:
+            msg = "❌ لم ترسل أي شيء!" if lang == "ar" else "❌ You didn’t send anything!"
+            await query.edit_message_text(msg, reply_markup=back_button(lang))
             return
-        msgs = state["messages"]
-        mode = state["mode"]
-
-        # تجهيز النص
-        if lang == "ar":
-            confirm = "✅ تم إرسال طلبك للمطور بنجاح."
-        else:
-            confirm = "✅ Your request has been sent to the developer."
 
         # إرسال للمطور
         user = query.from_user
-        header = f"📩 New {mode} from {user.first_name} (@{user.username}):\n\n"
-        await context.bot.send_message(DEVELOPER_ID, header)
-        for m in msgs:
+        header = f"📩 New {mode} from {user.first_name} (@{user.username})\n\n"
+        await context.bot.send_message(chat_id=DEV_ID, text=header)
+
+        for m in messages:
             if m["type"] == "text":
-                await context.bot.send_message(DEVELOPER_ID, m["data"])
+                await context.bot.send_message(chat_id=DEV_ID, text=m["content"])
             elif m["type"] == "photo":
-                await context.bot.send_photo(DEVELOPER_ID, m["data"])
+                await context.bot.send_photo(chat_id=DEV_ID, photo=m["content"])
             elif m["type"] == "video":
-                await context.bot.send_video(DEVELOPER_ID, m["data"])
+                await context.bot.send_video(chat_id=DEV_ID, video=m["content"])
 
-        await query.edit_message_text(confirm)
-        user_state[user_id] = {"mode": None, "messages": []}
+        # رد للمستخدم
+        confirm = {
+            "issue": ("تم إرسال مشكلتك ✅", "Your issue has been sent ✅"),
+            "suggestion": ("تم إرسال اقتراحك ✅", "Your suggestion has been sent ✅"),
+            "win": ("تم إرسال صورتك ✅", "Your screenshot has been sent ✅"),
+        }
 
-    elif query.data == "back":
-        text, keyboard = main_menu(lang)
-        try:
-            await query.edit_message_text(text, reply_markup=keyboard)
-        except:
-            pass
+        ar_msg, en_msg = confirm[mode]
+        await query.edit_message_text(ar_msg if lang == "ar" else en_msg, reply_markup=main_menu(lang))
 
-# ================== استقبال الرسائل ==================
-async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_data[user_id]["mode"] = None
+        user_data[user_id]["messages"] = []
+
+# استقبال رسائل المستخدم (نص/صورة/فيديو)
+async def collect_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    state = user_state.get(user_id)
-    if not state or not state["mode"]:
+    if user_id not in user_data or not user_data[user_id].get("mode"):
         return
 
     if update.message.text:
-        state["messages"].append({"type": "text", "data": update.message.text})
+        user_data[user_id]["messages"].append({"type": "text", "content": update.message.text})
     elif update.message.photo:
-        photo = update.message.photo[-1].file_id
-        state["messages"].append({"type": "photo", "data": photo})
+        file_id = update.message.photo[-1].file_id
+        user_data[user_id]["messages"].append({"type": "photo", "content": file_id})
     elif update.message.video:
-        state["messages"].append({"type": "video", "data": update.message.video.file_id})
+        file_id = update.message.video.file_id
+        user_data[user_id]["messages"].append({"type": "video", "content": file_id})
 
-# ================== تشغيل البوت ==================
+# تشغيل البوت
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(choose_lang, pattern="^lang_"))
-    app.add_handler(CallbackQueryHandler(menu_handler))
-    app.add_handler(MessageHandler(filters.ALL, handle_messages))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.ALL, collect_messages))
     app.run_polling()
 
 if __name__ == "__main__":
