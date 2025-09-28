@@ -13,6 +13,8 @@ from telegram.ext import (
     ContextTypes,
 )
 import telegram.error
+from flask import Flask
+import threading
 
 # ============== إعدادات ==============
 TOKEN = "8270195922:AAGDVz_mL8FOJta3NnnNSZTm1m-5guzba4Y"
@@ -25,27 +27,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============== حالة المستخدم ==============
-# Structure:
-# user_state[chat_id] = {
-#     "lang": "ar" or "en",
-#     "mode": None or "issue"/"suggestion"/"win",
-#     "buffer": [message_id1, message_id2, ...]
-# }
 user_state = {}
-
 
 # ============== مفاتيح الواجهات (Inline) ==============
 def language_keyboard():
-    # لا أعلام، نص عربي ثم English
     kb = [
         [InlineKeyboardButton("العربية", callback_data="lang_ar"),
          InlineKeyboardButton("English", callback_data="lang_en")]
     ]
     return InlineKeyboardMarkup(kb)
 
-
 def main_menu_markup(lang: str):
-    # الأزرار الرئيسية تظهر تحت الرسالة (Inline)
     if lang == "ar":
         kb = [
             [
@@ -66,9 +58,7 @@ def main_menu_markup(lang: str):
         text = "Choose from the menu:"
     return text, InlineKeyboardMarkup(kb)
 
-
 def confirm_markup(lang: str, mode: str):
-    # زر الإرسال و زر الرجوع تحت الرسالة
     if lang == "ar":
         if mode == "issue":
             send_text = "✅ إرسال المشكلة"
@@ -92,16 +82,10 @@ def confirm_markup(lang: str, mode: str):
     ]
     return InlineKeyboardMarkup(kb)
 
-
 # ============== دوال أساسية ==============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    رسالة الترحيب: بالعربي فوق وبعدين الانجليزي، ثم أزرار اختيار اللغة كـ Inline.
-    """
     chat_id = update.effective_chat.id
-    # reset state for safety
     user_state[chat_id] = {"lang": None, "mode": None, "buffer": []}
-
     welcome = (
         "👋 اهلا بك في بوت بلاك دارك\n"
         "الرجاء اختيار اللغة\n\n"
@@ -110,27 +94,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome, reply_markup=language_keyboard())
 
-
-# Unified helper to safely edit a callback message (ignore "Message is not modified")
 async def safe_edit_message(query, text: str, reply_markup=None):
     try:
         await query.edit_message_text(text, reply_markup=reply_markup)
     except telegram.error.BadRequest as e:
-        # Ignore "Message is not modified" error, log others
         if "Message is not modified" in str(e):
             logger.debug("edit_message_text ignored: Message is not modified")
         else:
             logger.exception("BadRequest while editing message")
 
-
-# CallbackQuery handler for all inline buttons
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     chat_id = query.from_user.id
 
-    # language selection
     if data == "lang_ar":
         user_state[chat_id] = {"lang": "ar", "mode": None, "buffer": []}
         text, markup = main_menu_markup("ar")
@@ -143,15 +121,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit_message(query, "✅ Language selected: English\n\n" + text, reply_markup=markup)
         return
 
-    # ensure language exists
     if chat_id not in user_state or not user_state[chat_id].get("lang"):
-        # fallback: require language selection
         await safe_edit_message(query, "الرجاء اختيار اللغة أولاً / Please select a language first.", reply_markup=language_keyboard())
         return
 
     lang = user_state[chat_id]["lang"]
 
-    # main menu buttons
     if data == "menu_issue":
         user_state[chat_id]["mode"] = "issue"
         user_state[chat_id]["buffer"] = []
@@ -176,29 +151,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit_message(query, text, reply_markup=confirm_markup(lang, "win"))
         return
 
-    # back to main menu
     if data == "back_to_menu":
         text, markup = main_menu_markup(lang)
         await safe_edit_message(query, text, reply_markup=markup)
-        # reset mode & buffer
         user_state[chat_id]["mode"] = None
         user_state[chat_id]["buffer"] = []
         return
 
-    # send actions
     if data.startswith("send_"):
-        mode = data.replace("send_", "")  # 'issue' / 'suggestion' / 'win'
+        mode = data.replace("send_", "")
         state = user_state.get(chat_id, {})
         buffer = state.get("buffer", [])
         lang = state.get("lang", "ar")
 
         if not buffer:
-            # nothing to send
             nothing_text = "❌ لم ترسل أي محتوى بعد!" if lang == "ar" else "❌ You haven't sent any content yet!"
             await safe_edit_message(query, nothing_text, reply_markup=confirm_markup(lang, mode))
             return
 
-        # Prepare header for admin (developer)
         user = query.from_user
         if lang == "ar":
             mode_name = "مشكلة" if mode == "issue" else ("اقتراح" if mode == "suggestion" else "صورة فوز")
@@ -215,20 +185,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🆔 ID: {user.id}\n\n"
         )
 
-        # send header first
         try:
             await context.bot.send_message(chat_id=DEVELOPER_ID, text=header)
         except Exception:
             logger.exception("Failed to send header to developer")
 
-        # forward each collected message to developer (preserve content)
         for msg_id in buffer:
             try:
                 await context.bot.forward_message(chat_id=DEVELOPER_ID, from_chat_id=chat_id, message_id=msg_id)
             except Exception:
                 logger.exception(f"Failed to forward message {msg_id} from {chat_id}")
 
-        # confirm to user and return to main menu
         confirm_text = (
             "✅ تم إرسال مشكلتك للمطور بنجاح، سيتم مراجعتها قريباً" if mode == "issue" and lang == "ar" else
             "✅ تم إرسال اقتراحك للمطور بنجاح" if mode == "suggestion" and lang == "ar" else
@@ -242,7 +209,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await query.edit_message_text(confirm_text + "\n\n" + text_menu, reply_markup=markup)
         except telegram.error.BadRequest as e:
-            # If "Message is not modified" or similar, ignore and try to send a new message
             if "Message is not modified" in str(e):
                 try:
                     await context.bot.send_message(chat_id=chat_id, text=confirm_text, reply_markup=markup)
@@ -251,47 +217,44 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 logger.exception("Unexpected BadRequest on edit after send")
 
-        # clear state
         user_state[chat_id]["mode"] = None
         user_state[chat_id]["buffer"] = []
         return
 
-
-# ============== جمع رسائل المستخدم ==============
 async def collect_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    يجمع أي رسالة (نص/صورة/فيديو/ملف...) في البافر لو المستخدم في حالة إرسال (issue/suggestion/win).
-    نجمع message_id لنتمكن من اعاد توجيهها (forward) للمطور.
-    """
     if not update.message:
         return
 
     chat_id = update.message.from_user.id
     state = user_state.get(chat_id)
     if not state or not state.get("mode"):
-        # مش في حالة كتابة شيء مرتبط بالإرسال
         return
 
-    # append message id to buffer
     msg_id = update.message.message_id
-    # Avoid duplicates (in case)
     if msg_id not in state["buffer"]:
         state["buffer"].append(msg_id)
 
+# ======= ميني ويب سيرفر للحفاظ على البوت نشط =======
+app_server = Flask("")
 
-# ============== تشغيل ==============
+@app_server.route("/")
+def home():
+    return "Bot is alive!"
+
+def run_server():
+    app_server.run(host="0.0.0.0", port=8080)
+
+# ======= تشغيل البوت =======
 def main():
-    app = Application.builder().token(TOKEN).build()
+    threading.Thread(target=run_server).start()  # تشغيل السيرفر في خلفية thread
 
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    # single callback handler for language/menu/send/back
     app.add_handler(CallbackQueryHandler(callback_handler))
-    # collect any message while user in a sending mode
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, collect_messages))
 
     logger.info("Bot is starting...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
